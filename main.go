@@ -6,6 +6,7 @@ import(
 	"fmt"
 	"encoding/json"
 	"log"
+	"strings"
 )
 
 type apiConfig struct {
@@ -52,7 +53,8 @@ func (cfg *apiConfig) handlerChirpValidation(w http.ResponseWriter, req *http.Re
 		respondWithError(w, 400, "Chirp is too long")
 		return 
 	} else {
-		respondWithJSON(w, 200, map[string]bool{"valid": true})
+		cleaned_body := replaceProfane(w, params.Body)
+		respondWithJSON(w, 200, map[string]string{"cleaned_body": cleaned_body})
 	}
 }
 
@@ -70,6 +72,19 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	w.Write(data)
+}
+
+func replaceProfane(w http.ResponseWriter, message string) string {
+	words := strings.Split(message, " ")
+	for idx, word := range words {
+		word = strings.ToLower(word)
+		if word == "kerfuffle" || word == "sharbert" || word == "fornax" {
+			words[idx] = "****"
+		}
+	}
+
+	cleaned_message := strings.Join(words, " ")
+	return cleaned_message
 }
 
 func main() {
