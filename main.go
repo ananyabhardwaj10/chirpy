@@ -7,10 +7,16 @@ import(
 	"encoding/json"
 	"log"
 	"strings"
+	_ "github.com/lib/pq"
+	"os"
+	"database/sql"
+	"github.com/joho/godotenv"
+	"github.com/ananyabhardwaj10/chirpy/internal/database"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	db *database.Queries
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -88,6 +94,16 @@ func replaceProfane(w http.ResponseWriter, message string) string {
 }
 
 func main() {
+	godotenv.Load()
+	dbUrl := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbUrl)
+	if err != nil {
+		log.Fatalf("error opening database: %s", err)
+		os.Exit(1)
+	}
+
+	dbQueries := database.New(db)
+
 	mux := http.NewServeMux()
 
 	server := &http.Server {
@@ -105,6 +121,7 @@ func main() {
 
 	apiCfg := apiConfig {
 		fileserverHits: atomic.Int32{},
+		db: dbQueries,
 	}
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", handler)))
