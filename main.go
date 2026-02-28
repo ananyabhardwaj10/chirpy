@@ -29,6 +29,14 @@ type User struct {
 	Email      string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request){
 		cfg.fileserverHits.Add(1)
@@ -63,28 +71,6 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 
-}
-
-func (cfg *apiConfig) handlerChirpValidation(w http.ResponseWriter, req *http.Request) {
-	type parameters struct {
-		Body string `json:"body"`
-	}
-
-	decoder := json.NewDecoder(req.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		respondWithError(w, 400, "Something went wrong")
-		return 
-	}
-
-	if len(params.Body) > 140 {
-		respondWithError(w, 400, "Chirp is too long")
-		return 
-	} else {
-		cleaned_body := replaceProfane(w, params.Body)
-		respondWithJSON(w, 200, map[string]string{"cleaned_body": cleaned_body})
-	}
 }
 
 func respondWithError(w http.ResponseWriter, code int, message string) {
@@ -141,6 +127,89 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
+func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+		UserId uuid.UUID `json:"user_id"`
+	}
+
+	params := parameters{}
+
+	decoder := json.NewDecoder(req.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 400, "Something went wrong")
+		return 
+	}
+
+	if len(params.Body) > 140 {
+		respondWithError(w, 400, "Chirp is too long")
+		return 
+	}
+	cleaned_body := replaceProfane(w, params.Body)
+
+	chirp := database.Chirp{}
+	chirp, err = cfg.db.CreateChirp(req.Context(), database.CreateChirpParams{
+		Body: cleaned_body,
+		UserID: params.UserId,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error creating chirp")
+		return 
+	}
+	respondWithJSON(w, http.StatusCreated, Chirp{
+		ID: chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body: chirp.Body,
+		UserID: chirp.UserID,
+	})
+}
+
+func (cfg *apiConfig) handlerGetChirps (w http.ResponseWriter, req *http.Request) {
+	chirps, err := cfg.db.GetAllChirps(req.Context()) 
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error retrieving all chirps")
+		return 
+	}
+
+	var resp []Chirp
+	for _, chirp := range chirps {
+		resp = append(resp, Chirp{
+			ID: chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body: chirp.Body,
+			UserID: chirp.UserID,
+		})
+	}
+	respondWithJSON(w, http.StatusOK, resp)
+}
+
+func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, req *http.Request) {
+	chirp_id_str := req.PathValue("chirpID")
+	chirp_id, err := uuid.Parse(chirp_id_str)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error with chirp id")
+		return 
+	}
+
+	chirp, err := cfg.db.GetChirpByID(req.Context(), chirp_id)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "no chirp by the given id")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, Chirp{
+		ID: chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body: chirp.Body,
+		UserID: chirp.UserID,
+	})
+	
+}
+
 func main() {
 	godotenv.Load()
 	dbUrl := os.Getenv("DB_URL")
@@ -178,8 +247,10 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", handler)))
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
-	mux.HandleFunc("POST /api/validate_chirp", apiCfg.handlerChirpValidation)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerUsers)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerChirps)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetSingleChirp)
 
 	server.ListenAndServe()
 }
