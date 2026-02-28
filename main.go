@@ -14,6 +14,7 @@ import(
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/ananyabhardwaj10/chirpy/internal/database"
+	"github.com/ananyabhardwaj10/chirpy/internal/auth"
 )
 
 type apiConfig struct {
@@ -104,6 +105,7 @@ func replaceProfane(w http.ResponseWriter, message string) string {
 
 func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
+		Password string `json:"password"`
 		Email string `json:"email"`
 	}
 	params := parameters{}
@@ -113,12 +115,17 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "error getting user email")
 		return
 	}
-	user := database.User{}
-	user, err = cfg.db.CreateUser(req.Context(), params.Email)
+
+	hashedPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "error creating user")
-		return
+		respondWithError(w, http.StatusBadRequest, "error with password")
+		return 
 	}
+	user := database.User{}
+	user, err = cfg.db.CreateUser(req.Context(), database.CreateUserParams{
+    	Email:          params.Email,
+    	HashedPassword: hashedPassword,
+	})
 	respondWithJSON(w, 201, User{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt,
@@ -210,6 +217,47 @@ func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, req *http.Req
 	
 }
 
+func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+	params := parameters{}
+
+	decoder := json.NewDecoder(req.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return 
+	}
+
+	user, err := cfg.db.GetUserByEmail(req.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "cannot get user by email")
+		return 
+	}
+
+	match, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if !match || err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return 
+	}
+
+	type response struct {
+    	ID        uuid.UUID `json:"id"`
+    	CreatedAt time.Time `json:"created_at"`
+    	UpdatedAt time.Time `json:"updated_at"`
+    	Email     string    `json:"email"`
+	}
+
+	respondWithJSON(w, http.StatusOK, response{
+    	ID:        user.ID,
+    	CreatedAt: user.CreatedAt,
+    	UpdatedAt: user.UpdatedAt,
+    	Email:     user.Email,
+	})
+}
+
 func main() {
 	godotenv.Load()
 	dbUrl := os.Getenv("DB_URL")
@@ -251,6 +299,7 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerChirps)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetSingleChirp)
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)
 
 	server.ListenAndServe()
 }
