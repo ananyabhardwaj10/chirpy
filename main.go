@@ -9,7 +9,9 @@ import(
 	"strings"
 	_ "github.com/lib/pq"
 	"os"
+	"time"
 	"database/sql"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/ananyabhardwaj10/chirpy/internal/database"
 )
@@ -17,6 +19,14 @@ import(
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	db *database.Queries
+	platform string 
+}
+
+type User struct {
+	ID         uuid.UUID `json:"id"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	Email      string    `json:"email"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -39,7 +49,20 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, req *http.Request) {
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
+	if cfg.platform != "dev" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("Only allowed in dev!"))
+		return 
+	}
 	cfg.fileserverHits.Store(0)
+	err := cfg.db.DeleteAllUsers(req.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return 
+	}
+
+	w.WriteHeader(http.StatusOK)
+
 }
 
 func (cfg *apiConfig) handlerChirpValidation(w http.ResponseWriter, req *http.Request) {
@@ -93,6 +116,31 @@ func replaceProfane(w http.ResponseWriter, message string) string {
 	return cleaned_message
 }
 
+func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Email string `json:"email"`
+	}
+	params := parameters{}
+	decoder := json.NewDecoder(req.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error getting user email")
+		return
+	}
+	user := database.User{}
+	user, err = cfg.db.CreateUser(req.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error creating user")
+		return
+	}
+	respondWithJSON(w, 201, User{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+	})
+}
+
 func main() {
 	godotenv.Load()
 	dbUrl := os.Getenv("DB_URL")
@@ -119,15 +167,19 @@ func main() {
 
 	handler := http.FileServer(http.Dir("."))
 
+	platform := os.Getenv("PLATFORM")
+
 	apiCfg := apiConfig {
 		fileserverHits: atomic.Int32{},
 		db: dbQueries,
+		platform: platform,
 	}
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", handler)))
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
 	mux.HandleFunc("POST /api/validate_chirp", apiCfg.handlerChirpValidation)
+	mux.HandleFunc("POST /api/users", apiCfg.handlerUsers)
 
 	server.ListenAndServe()
 }
