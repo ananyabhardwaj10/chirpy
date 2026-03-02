@@ -21,6 +21,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	db *database.Queries
 	platform string 
+	jwt_secret string 
 }
 
 type User struct {
@@ -137,7 +138,6 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
-		UserId uuid.UUID `json:"user_id"`
 	}
 
 	params := parameters{}
@@ -155,10 +155,22 @@ func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
 	}
 	cleaned_body := replaceProfane(w, params.Body)
 
+	tokenString, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error generating token string")
+		return 
+	}
+
+	id, err := auth.ValidateJWT(tokenString, cfg.jwt_secret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
 	chirp := database.Chirp{}
 	chirp, err = cfg.db.CreateChirp(req.Context(), database.CreateChirpParams{
 		Body: cleaned_body,
-		UserID: params.UserId,
+		UserID: id,
 	})
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Error creating chirp")
@@ -225,11 +237,12 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 	params := parameters{}
 
 	decoder := json.NewDecoder(req.Body)
-	err := decoder.Decode(&params)
+	err := decoder.Decode(&params) 
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Something went wrong")
 		return 
 	}
+
 
 	user, err := cfg.db.GetUserByEmail(req.Context(), params.Email)
 	if err != nil {
@@ -243,11 +256,27 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		return 
 	}
 
+	token, err := auth.MakeJWT(user.ID, cfg.jwt_secret, time.Hour)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating JWT")
+		return 
+	}
+
+	refreshToken := auth.MakeRefreshToken()
+
+	_, err = cfg.db.CreateRefreshToken(req.Context(), database.CreateRefreshTokenParams{
+		Token: refreshToken,
+		UserID: user.ID,
+		ExpiresAt: time.Now().UTC().Add(time.Hour * 24 * 60),
+	})
+
 	type response struct {
     	ID        uuid.UUID `json:"id"`
     	CreatedAt time.Time `json:"created_at"`
     	UpdatedAt time.Time `json:"updated_at"`
     	Email     string    `json:"email"`
+		Token 	  string    `json:"token"`
+		RefreshToken string `json:"refresh_token"`
 	}
 
 	respondWithJSON(w, http.StatusOK, response{
@@ -255,7 +284,53 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
     	CreatedAt: user.CreatedAt,
     	UpdatedAt: user.UpdatedAt,
     	Email:     user.Email,
+		Token: 	   token,
+		RefreshToken: refreshToken,
 	})
+}
+
+func (cfg *apiConfig) handlerRefreshTokens(w http.ResponseWriter, req *http.Request) {
+	reftoken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error extracting token")
+		return 
+	}
+
+	user, err := cfg.db.GetUserFromRefreshToken(req.Context(), reftoken) 
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized access")
+		return 
+	}
+
+	token, err := auth.MakeJWT(user.ID, cfg.jwt_secret, time.Hour)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error generating new access token")
+		return 
+	}
+
+	type response struct {
+		Token string `json:"token"`
+	}
+
+	respondWithJSON(w, http.StatusOK, response{
+		Token: token,
+	})
+}
+
+func (cfg *apiConfig) handlerRevoke(w http.ResponseWriter, req *http.Request) {
+	refToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error extracting refresh token")
+		return 
+	}
+
+	err = cfg.db.RevokeRefreshToken(req.Context(), refToken)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error revoking refresh token")
+		return 
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func main() {
@@ -285,11 +360,13 @@ func main() {
 	handler := http.FileServer(http.Dir("."))
 
 	platform := os.Getenv("PLATFORM")
+	jwtSecret := os.Getenv("JWT_SECRET")
 
 	apiCfg := apiConfig {
 		fileserverHits: atomic.Int32{},
 		db: dbQueries,
 		platform: platform,
+		jwt_secret: jwtSecret,
 	}
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", handler)))
@@ -300,6 +377,8 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetSingleChirp)
 	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshTokens)
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
 
 	server.ListenAndServe()
 }

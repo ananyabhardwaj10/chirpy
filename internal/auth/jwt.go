@@ -2,6 +2,8 @@ package auth
 import (
 	"time"
 	"fmt"
+	"strings"
+	"net/http"
 	"github.com/google/uuid"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -54,5 +56,17 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 
 }
 
+func GetBearerToken(headers http.Header) (string, error) {
+	token := headers.Get("Authorization")
 
+	if token == "" {
+		return "", fmt.Errorf("No auth information found")
+	}
+
+	token_trimmed_prefix := strings.TrimPrefix(token, "Bearer")
+
+	tokenString := strings.TrimSpace(token_trimmed_prefix)
+
+	return tokenString, nil
+}
 
