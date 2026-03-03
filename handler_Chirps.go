@@ -124,3 +124,44 @@ func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, req *http.Req
 	})
 	
 }
+
+func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, req *http.Request) {
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error extracting access token")
+		return 
+	}
+
+	user_id, err := auth.ValidateJWT(token, cfg.jwt_secret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "could not validate access token")
+		return 
+	}
+
+	chirp_id_str := req.PathValue("chirpID")
+	chirp_id, err := uuid.Parse(chirp_id_str)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error with chirp id")
+		return 
+	}
+
+	chirp, err := cfg.db.GetChirpByID(req.Context(), chirp_id)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "chirp not found")
+		return 
+	}
+
+	if user_id != chirp.UserID {
+		respondWithError(w, http.StatusForbidden, "Access to delete forbidden")
+		return 
+	}
+
+	err = cfg.db.DeleteChirp(req.Context(), chirp_id)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error deleting the chirp")
+		return 
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
