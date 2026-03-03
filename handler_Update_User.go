@@ -56,6 +56,7 @@ func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, req *http.Request
     	CreatedAt time.Time `json:"created_at"`
     	UpdatedAt time.Time `json:"updated_at"`
     	Email     string    `json:"email"`
+		IsChirpyRed bool `json:"is_chirpy_red"`
 	}
 
 	respondWithJSON(w, http.StatusOK, response{
@@ -63,6 +64,7 @@ func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, req *http.Request
 		CreatedAt: updatedUser.CreatedAt,
 		UpdatedAt: updatedUser.UpdatedAt,
 		Email: params.Email,
+		IsChirpyRed: updatedUser.IsChirpyRed,
 	})
 
 }

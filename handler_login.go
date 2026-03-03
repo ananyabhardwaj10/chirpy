@@ -57,6 +57,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
     	Email     string    `json:"email"`
 		Token 	  string    `json:"token"`
 		RefreshToken string `json:"refresh_token"`
+		IsChirpyRed bool    `json:"is_chirpy_red"`
 	}
 
 	respondWithJSON(w, http.StatusOK, response{
@@ -66,5 +67,6 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
     	Email:     user.Email,
 		Token: 	   token,
 		RefreshToken: refreshToken,
+		IsChirpyRed: user.IsChirpyRed,
 	})
 }

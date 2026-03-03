@@ -2,6 +2,9 @@ package auth
 import(
 	"crypto/rand"
 	"encoding/hex"
+	"net/http"
+	"fmt"
+	"strings"
 	"github.com/alexedwards/argon2id"
 )
 
@@ -25,4 +28,18 @@ func MakeRefreshToken() string {
 
 	str := hex.EncodeToString(encoded_str)
 	return str
+}
+
+func GetAPIKey(headers http.Header) (string, error) {
+	key := headers.Get("Authorization")
+
+	if key == "" {
+		return "", fmt.Errorf("No auth information found")
+	}
+
+	key_trimmed_prefix := strings.TrimPrefix(key, "ApiKey")
+
+	apiKey := strings.TrimSpace(key_trimmed_prefix)
+
+	return apiKey, nil
 }

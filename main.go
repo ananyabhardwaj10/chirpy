@@ -16,6 +16,7 @@ type apiConfig struct {
 	db *database.Queries
 	platform string 
 	jwt_secret string 
+	polka_key string
 }
 
 func main() {
@@ -46,12 +47,14 @@ func main() {
 
 	platform := os.Getenv("PLATFORM")
 	jwtSecret := os.Getenv("JWT_SECRET")
+	polkaKey := os.Getenv("POLKA_KEY")
 
 	apiCfg := apiConfig {
 		fileserverHits: atomic.Int32{},
 		db: dbQueries,
 		platform: platform,
 		jwt_secret: jwtSecret,
+		polka_key: polkaKey,
 	}
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", handler)))
@@ -66,6 +69,7 @@ func main() {
 	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
 	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.handlerPolkaWebHooks)
 
 	server.ListenAndServe()
 }
